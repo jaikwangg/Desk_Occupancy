@@ -28,11 +28,13 @@ ground truth เป็นของ COCO ไม่ใช่การนับเ�
 """
 from __future__ import annotations
 
+import gc
 import json
 import os
 import sys
 import time
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -47,7 +49,18 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 MODELDIR = ROOT / "models"
 TESTSETS = {"occlusion": HERE / "occlusion_testset.json",
-            "desk": HERE / "desk_testset.json"}
+            "desk": HERE / "desk_testset.json",
+            "openimages": HERE / "openimages_testset.json"}
+
+# คำเตือนที่ต้องขึ้นก่อนตารางของบางชุด — ตัวเลขบางคอลัมน์เชื่อไม่ได้
+TESTSET_NOTES = {
+    "openimages": (
+        "*** ชุดนี้อ่านได้เฉพาะคอลัมน์ recall ***",
+        "    คอลัมน์ false pos ใช้ไม่ได้ เพราะกล่องคนของ Open Images ไม่ครบ",
+        "    (ตรวจแล้ว: FP เกือบทั้งหมดตกบนคนจริงที่ไม่มีกล่อง GT)",
+        "    และชุดนี้ไม่มีภาพโต๊ะว่าง — ใช้ --testset desk สำหรับ false PRESENT",
+    ),
+}
 IMGDIR = HERE / "images"
 
 THREADS = 2  # ตรงกับ detector.torch_threads ใน occupancy.yaml
@@ -98,19 +111,37 @@ def download(url: str, dest: Path) -> None:
 
 
 def ensure_images(recs: list[dict]) -> None:
-    """โหลดภาพจาก COCO (ไม่เก็บใน git เพราะใหญ่) ข้ามใบที่มีแล้ว"""
+    """โหลดภาพจาก URL ในชุดทดสอบ (COCO หรือ Open Images แล้วแต่ชุด)
+    ไม่เก็บใน git เพราะใหญ่ — ข้ามใบที่มีแล้ว
+
+    โหลดขนาน 16 เส้น เพราะเป็นงานรอเน็ตล้วน ไม่กิน CPU — ชุด openimages
+    มี ~500 ใบ ถ้าโหลดทีละใบจะใช้เวลาเป็นสิบนาที
+    """
     IMGDIR.mkdir(exist_ok=True)
     missing = [r for r in recs if not (IMGDIR / r["file"]).exists()]
     if not missing:
         return
-    print(f"กำลังโหลดภาพ {len(missing)} ใบจาก COCO ...")
-    for i, r in enumerate(missing, 1):
+    print(f"กำลังโหลดภาพ {len(missing)} ใบ ...")
+    done = 0
+
+    def fetch(r):
         try:
-            urllib.request.urlretrieve(r["url"], IMGDIR / r["file"])
+            # เขียนลงไฟล์ชั่วคราวก่อนแล้วค่อย rename — กัน error กลางคันทิ้งไฟล์
+            # ที่โหลดไม่ครบไว้ ซึ่งรอบถัดไปจะนึกว่ามีแล้วและอ่านไม่ออก
+            tmp = IMGDIR / (r["file"] + ".part")
+            urllib.request.urlretrieve(r["url"], tmp)
+            tmp.replace(IMGDIR / r["file"])
         except OSError as exc:
-            print(f"  ข้าม {r['file']}: {exc}")
-        if i % 10 == 0:
-            print(f"  {i}/{len(missing)}")
+            return f"  ข้าม {r['file']}: {exc}"
+        return None
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for msg in pool.map(fetch, missing):
+            if msg:
+                print(msg)
+            done += 1
+            if done % 50 == 0:
+                print(f"  {done}/{len(missing)}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -282,7 +313,17 @@ def evaluate(model_name: str, recs: list[dict]) -> dict:
     infer_s = 0.0
     for r in recs:
         img = cv2.imread(str(IMGDIR / r["file"]))
+        if img is None:
+            # ไฟล์โหลดมาไม่ครบ (เช่นถูก kill กลางทาง) — บอกชื่อไฟล์ไปเลย
+            # ไม่งั้นจะได้แค่ 'NoneType' has no attribute 'shape' ซึ่งหาต้นเหตุยาก
+            raise RuntimeError(
+                f"อ่านภาพไม่ได้: {r['file']} — ลบไฟล์นี้แล้วรันใหม่ให้โหลดซ้ำ")
         h, w = img.shape[:2]
+        # Open Images เก็บกล่องเป็นสัดส่วน 0-1 (CSV ไม่มีขนาดภาพ) ต้องคูณกลับ
+        # ก่อนใช้ ส่วน COCO เก็บเป็นพิกเซลอยู่แล้ว
+        scale = (lambda bs: [[bx * w, by * h, bw * w, bh * h] for bx, by, bw, bh in bs])             if r.get("norm") else (lambda bs: bs)
+        persons, occluded = scale(r["persons"]), scale(r["occluded"])
+        persons_all = scale(r["persons_all"])
         small = cv2.resize(img, (480, int(h * 480 / w)))
         # จับเวลาเฉพาะ inference - ไม่รวมอ่านไฟล์จากดิสก์ ซึ่งของจริงไม่มี
         # (เฟรมมาจากกล้องอยู่ใน RAM แล้ว) ตัวเลขนี้จึงเทียบกับ production ได้
@@ -294,15 +335,15 @@ def evaluate(model_name: str, recs: list[dict]) -> dict:
         sx, sy = w / small.shape[1], h / small.shape[0]
         centers = [(cx * sx, cy * sy) for cx, cy in found]
 
-        for box in r["persons"]:
+        for box in persons:
             tot_all += 1
             hit_all += any(inside(box, cx, cy) for cx, cy in centers)
-        for box in r["occluded"]:
+        for box in occluded:
             tot_occ += 1
             hit_occ += any(inside(box, cx, cy) for cx, cy in centers)
         # เทียบกับคนทุกขนาด ไม่งั้นการเจอคนตัวเล็กไกลๆ จะถูกนับเป็น false positive
         for cx, cy in centers:
-            if not any(inside(b, cx, cy) for b in r["persons_all"]):
+            if not any(inside(b, cx, cy) for b in persons_all):
                 false_pos += 1
         # ภาพ negative = โต๊ะว่างไม่มีคนเลย ทุก detection คือ false PRESENT
         if r.get("kind") == "negative":
@@ -348,6 +389,10 @@ def main(argv: list[str]) -> int:
 
     print(f"\nภาพ {len(recs)} ใบ | คน {sum(len(r['persons']) for r in recs)} "
           f"(ถูกจอบัง {sum(len(r['occluded']) for r in recs)})\n")
+    for note in TESTSET_NOTES.get(which, ()):
+        print(note)
+    if which in TESTSET_NOTES:
+        print()
     print(f"ทุกโมเดลจำกัด {THREADS} threads เท่ากัน (ตรงกับ detector.torch_threads)")
     print("หมายเหตุ: ms ที่นี่สูงกว่าของจริง ~20-25% เพราะภาพทดสอบขนาดไม่เท่ากันทุกใบ")
     print("          กล้องจริงส่งเฟรมขนาดคงที่ -> yolo11n ~68 ms, yolo11s ~120 ms\n")
@@ -361,6 +406,11 @@ def main(argv: list[str]) -> int:
         except Exception as exc:  # noqa: BLE001
             print(f"{name:<20}  ใช้ไม่ได้: {str(exc)[:45]}")
             continue
+        finally:
+            # คืนหน่วยความจำก่อนโหลดโมเดลตัวถัดไป — รันหลายตัวติดกันบนเครื่อง
+            # แรมน้อยเคยโดน OOM kill กลางตาราง (runtime ของ OpenVINO/torch
+            # ไม่ได้คืนทันทีตอน detector หลุด scope)
+            gc.collect()
         rows[name] = r
         neg = (f"{r['neg_hit']}/{r['neg_imgs']}" if r["neg_imgs"] else "-")
         print(f"{name:<20}{r['ms']:>9.1f}"

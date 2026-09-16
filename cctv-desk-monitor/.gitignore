@@ -20,3 +20,4 @@ __pycache__/
 venv/
 models/*_openvino_model/
 benchmark/coco_annotations/
+benchmark/openimages_annotations/

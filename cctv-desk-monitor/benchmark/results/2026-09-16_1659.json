@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "date": "2026-09-16 16:59",
+    "testset": "openimages",
+    "argv": [
+      "dfine-n",
+      "dfine-n-ov",
+      "dfine-n-ov-int8"
+    ],
+    "images": 400,
+    "threads": 2,
+    "conf": 0.5
+  },
+  "dfine-n": {
+    "ms": 216.20965300011449,
+    "recall_all": 0.9830508474576272,
+    "recall_occluded": 0.9845132743362832,
+    "hit_all": 522,
+    "tot_all": 531,
+    "hit_occ": 445,
+    "tot_occ": 452,
+    "false_pos": 134,
+    "neg_imgs": 0,
+    "neg_fp": 0,
+    "neg_hit": 0
+  },
+  "dfine-n-ov": {
+    "ms": 61.65418724936899,
+    "recall_all": 0.9830508474576272,
+    "recall_occluded": 0.9845132743362832,
+    "hit_all": 522,
+    "tot_all": 531,
+    "hit_occ": 445,
+    "tot_occ": 452,
+    "false_pos": 134,
+    "neg_imgs": 0,
+    "neg_fp": 0,
+    "neg_hit": 0
+  },
+  "dfine-n-ov-int8": {
+    "ms": 47.09356399864191,
+    "recall_all": 0.9887005649717514,
+    "recall_occluded": 0.9889380530973452,
+    "hit_all": 525,
+    "tot_all": 531,
+    "hit_occ": 447,
+    "tot_occ": 452,
+    "false_pos": 138,
+    "neg_imgs": 0,
+    "neg_fp": 0,
+    "neg_hit": 0
+  }
+}

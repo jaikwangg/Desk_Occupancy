@@ -1,0 +1,53 @@
+{
+  "_meta": {
+    "date": "2026-09-16 16:56",
+    "testset": "openimages",
+    "argv": [
+      "yolo11n.pt",
+      "yolo11s.pt",
+      "models/yolo11s_openvino_model"
+    ],
+    "images": 400,
+    "threads": 2,
+    "conf": 0.5
+  },
+  "yolo11n.pt": {
+    "ms": 54.640072750335094,
+    "recall_all": 0.9171374764595104,
+    "recall_occluded": 0.9269911504424779,
+    "hit_all": 487,
+    "tot_all": 531,
+    "hit_occ": 419,
+    "tot_occ": 452,
+    "false_pos": 66,
+    "neg_imgs": 0,
+    "neg_fp": 0,
+    "neg_hit": 0
+  },
+  "yolo11s.pt": {
+    "ms": 104.70969324902399,
+    "recall_all": 0.9623352165725048,
+    "recall_occluded": 0.9690265486725663,
+    "hit_all": 511,
+    "tot_all": 531,
+    "hit_occ": 438,
+    "tot_occ": 452,
+    "false_pos": 89,
+    "neg_imgs": 0,
+    "neg_fp": 0,
+    "neg_hit": 0
+  },
+  "models/yolo11s_openvino_model": {
+    "ms": 43.88206375442678,
+    "recall_all": 0.96045197740113,
+    "recall_occluded": 0.9690265486725663,
+    "hit_all": 510,
+    "tot_all": 531,
+    "hit_occ": 438,
+    "tot_occ": 452,
+    "false_pos": 92,
+    "neg_imgs": 0,
+    "neg_fp": 0,
+    "neg_hit": 0
+  }
+}
