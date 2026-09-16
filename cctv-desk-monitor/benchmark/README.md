@@ -1,18 +1,30 @@
 # benchmark/
 
-วัดโมเดลตรวจจับบุคคลกับฉากจริงที่ **คนถูกจอ/แล็ปท็อปบัง**
+วัดโมเดลตรวจจับบุคคลกับฉากจริง — มี **2 ชุดทดสอบ** เลือกด้วย `--testset`
+
+| ชุด | คืออะไร | ใช้ตอบคำถามอะไร |
+|---|---|---|
+| `occlusion` (ค่าเริ่มต้น) | 46 ภาพ / คน 131 (ถูกจอบัง 69) | โมเดลไหนจับ**คนที่ถูกจอ/แล็ปท็อปบัง**ได้ดีกว่า |
+| `desk` | 16 ภาพคนนั่งที่โต๊ะ (คน 25) + **31 ภาพโต๊ะว่าง** | โมเดลไหน**ไม่เด้ง PRESENT ตอนโต๊ะว่าง** ← เกณฑ์ที่สำคัญสุดของงานนี้ |
 
 ```bash
-python benchmark/benchmark_models.py                      # ชุด default (7 โมเดล)
+python benchmark/benchmark_models.py                      # ชุด occlusion, default (7 โมเดล)
+python benchmark/benchmark_models.py --testset desk       # ชุดโต๊ะทำงาน + โต๊ะว่าง
 python benchmark/benchmark_models.py yolo11s.pt           # เจาะจงโมเดล
-python benchmark/benchmark_models.py --all                # ทุกตัวที่รองรับ (13 โมเดล)
-python benchmark/benchmark_models.py yolo11s.pt dfine-s rtmdet-tiny   # เทียบข้ามตระกูล
+python benchmark/benchmark_models.py --all                # ทุกตัวที่รองรับ (15 รายการ)
+python benchmark/benchmark_models.py --testset desk dfine-n-ov rtmdet-n-person
+
+python benchmark/build_desk_testset.py                    # สร้าง desk_testset.json ใหม่
+python benchmark/build_desk_testset.py --stats-only       # ดูสถิติการคัด ไม่เขียนไฟล์
 ```
 
-ครั้งแรกจะโหลดภาพ 46 ใบจาก COCO (~9 MB) มาไว้ใน `benchmark/images/` (ไม่เข้า git)
+ครั้งแรกจะโหลดภาพจาก COCO (~9 MB) มาไว้ใน `benchmark/images/` (ไม่เข้า git)
+ส่วน `build_desk_testset.py` ต้องใช้ COCO annotations (~253 MB ครั้งเดียว)
+ซึ่งมันโหลดลง `benchmark/coco_annotations/` ให้เอง (ไม่เข้า git เช่นกัน)
 ส่วนน้ำหนักโมเดลที่ยังไม่มีจะโหลดลง `models/` ให้อัตโนมัติ (ก็ไม่เข้า git)
 
-ผลดิบของรอบล่าสุดถูกเขียนทับไว้ที่ `benchmark/results_latest.json`
+ผลดิบของรอบล่าสุดอยู่ที่ `benchmark/results_latest.json` และทุกการรันเก็บสำเนา
+ถาวรไม่ทับกันไว้ใน `benchmark/results/<วันที่_เวลา>.json`
 ตัวอย่างการรันจริงพร้อมผลลัพธ์เต็ม ดู **[example_run.md](example_run.md)**
 
 ## โมเดลที่รองรับ
@@ -26,12 +38,38 @@ python benchmark/benchmark_models.py yolo11s.pt dfine-s rtmdet-tiny   # เท�
 | `crowdhuman-yolov8n` | ultralytics | yolov8n ที่ fine-tune บน **CrowdHuman** (เทรนเฉพาะคน + ฉากแออัด/ถูกบัง) |
 | `models/yolo11s_openvino_model` | ultralytics | path ที่เป็น**โฟลเดอร์** = โมเดลที่ export เป็น OpenVINO |
 | `dfine-n` `dfine-s` `dfine-m` | transformers | **D-FINE** — transformer detector รุ่นต่อจาก RT-DETR |
+| `dfine-n-ov` `dfine-n-ov-int8` | dfine + openvino | D-FINE ที่ export เป็น OpenVINO IR — ต้องรัน `export_dfine_openvino.py` ก่อน |
 | `rtmdet-tiny` `rtmdet-s` | onnx + openvino | **RTMDet** (COCO) จาก mmdeploy |
 | `rtmdet-n-person` `rtmdet-m-person` | onnx + openvino | RTMDet รุ่นที่เทรน**คลาสคนเดียว** |
 
 `dfine-*` ต้องมี `transformers` (`pip install transformers`) ตัวอื่นใช้ของที่มีอยู่แล้ว
 โดยเฉพาะ RTMDet ที่รันผ่าน **OpenVINO runtime ซึ่งอ่าน `.onnx` ได้ตรงๆ** จึงไม่ต้องลง
 `onnxruntime` และไม่ต้องลง `mmcv`/`mmdet` (ซึ่งต้อง compile บน Windows)
+
+## export D-FINE เป็น OpenVINO
+
+YOLO มี `.export(format="openvino")` ให้บรรทัดเดียว แต่ D-FINE เป็นโมเดล transformers
+ธรรมดาจึงต้องแปลงเอง — `export_dfine_openvino.py` ทำให้:
+
+```bash
+python benchmark/export_dfine_openvino.py               # dfine-n ทั้ง FP32 + INT8
+python benchmark/export_dfine_openvino.py dfine-s       # รุ่นอื่น
+python benchmark/export_dfine_openvino.py dfine-n --fp32-only
+```
+
+ได้ `models/dfine-n_openvino_model/` และ `models/dfine-n_int8_openvino_model/`
+แล้วเรียกใน benchmark ด้วยชื่อ `dfine-n-ov` / `dfine-n-ov-int8`
+
+ข้อควรรู้ 2 ข้อ:
+
+- **INT8 calibration ต้องใช้ภาพที่ไม่ทับกับชุดวัด** ไม่งั้นเป็น data leakage
+  สคริปต์ใช้ภาพใน `benchmark/images/` ที่ไม่ได้อยู่ใน `occlusion_testset.json`
+  (19 ใบที่ถูกคัดออกด้วยเกณฑ์เพดาน 60%) — COCO val2017 โดเมนเดียวกันแต่ไม่ทับ
+- NNCF ต้องส่ง `model_type=nncf.ModelType.TRANSFORMER` ไม่งั้นมันจะ quantize
+  attention/softmax ด้วยแล้วความแม่นตกหนัก
+
+`DFineDetector` ใช้ **pre/postprocess ของ processor ตัวเดิมทุกบรรทัด** ต่างกันแค่
+runtime ที่รัน forward ผลจึงเทียบ PyTorch vs OpenVINO ได้ตรงๆ
 
 ## ชุดทดสอบมาจากไหน
 
@@ -47,6 +85,30 @@ python benchmark/benchmark_models.py yolo11s.pt dfine-s rtmdet-tiny   # เท�
 
 ได้ **46 ภาพ / คน 131 คน (ถูกจอบัง 69 คน)**
 
+### ชุดที่ 2 — `desk_testset.json` (สร้างด้วย `build_desk_testset.py`)
+
+ชุดแรกคัดแค่ "คนที่ถูกจอบัง" ซึ่งได้**ภาพถ่ายคน**มาเยอะ ไม่ใช่**ฉากโต๊ะทำงาน**
+ชุดนี้บังคับเพิ่มว่าต้องเป็น**คนที่นั่งอยู่ที่โต๊ะซึ่งมีอุปกรณ์ทำงาน** และเพิ่ม
+**ภาพ negative** ที่ชุดแรกไม่มีเลย
+
+| เกณฑ์ | เหตุผล |
+|---|---|
+| ต้องมี `laptop` หรือ `keyboard` (`tv` เดี่ยวๆ ไม่นับ) | `tv` เดี่ยว = ห้องนั่งเล่น ไม่ใช่โต๊ะทำงาน |
+| ต้องมี `chair` หรือ `dining table` | COCO ใช้ `dining table` กับโต๊ะทำงานด้วย |
+| ห้ามมีหมวดกลางแจ้ง/กีฬา/ถนน (`bench` `tennis racket` `car` ...) | **มาจากการตรวจด้วยตา** — รอบแรกได้ม้านั่งสวน สนามเทนนิส สนามบาส ห้องน้ำ |
+| อุปกรณ์ต้อง**อยู่ตรงหน้า**: ซ้อนกล่องคน + จุดกลางอยู่ในช่วง x ของคน + ต่ำกว่าหัวไหล่ | รอบแรกใช้แค่ "อยู่ใกล้กัน" ซึ่งหลวมเกิน — แล็ปท็อปบนโต๊ะอีกตัวก็ผ่าน |
+| ต้องนั่ง: keypoints ยืนยันว่า**ต้นขาหุบและชี้ไปข้างหน้า** | เงื่อนไขหลังจำเป็น — รอบแรก**นักเทนนิสเสิร์ฟ**กับ**กรรมการบาส**ผ่านเกณฑ์ เพราะขายกทำให้ระยะดิ่งสะโพก-เข่าสั้นเหมือนท่านั่ง |
+| หรือ: มีไหล่แต่ไม่มีหัวเข่า **และ** ตัวยืดถึงระดับอุปกรณ์ | ท่อนล่างถูกโต๊ะบัง = การจัดเฟรม "คนนั่งหลังโต๊ะ" ที่ต้องการ |
+| กล่องต้องไม่สูงผอม (`h/w <= 2.0`) | คนยืนกล่องจะสูงผอม คนนั่งกะทัดรัดกว่า |
+| **negative**: มี `chair` + อุปกรณ์ แต่ **ไม่มี `person` เลย** | ทุก detection บนภาพพวกนี้คือ false PRESENT ล้วน |
+
+ได้ **16 ภาพ / คน 25 (ถูกอุปกรณ์บัง 17) + 31 ภาพโต๊ะว่าง** — เล็กกว่าชุดแรกมาก
+เพราะเกณฑ์รัดขึ้น **n เล็กแบบนี้ใช้ชี้ทิศทางได้ ไม่ใช่ตัวเลขรับประกัน**
+
+> เกณฑ์ชุดนี้ผ่านการ**ดูภาพจริงด้วยตา 2 รอบ** ก่อนเชื่อ — รอบแรกเกณฑ์หลวมเกิน
+> มีมอเตอร์ไซค์ เด็กถือร่ม คนเล่น Wii คนยืนพรีเซนต์ หลุดเข้ามา
+> **อย่ารันเกณฑ์คัดแล้วเชื่อตัวเลขทันที ให้เปิดภาพดูก่อนเสมอ**
+
 ## วิธีวัด
 
 ตรงกับที่ระบบใช้จริง: ย่อภาพเป็น 480px แล้วเช็คว่า **center ของ detection ตกในกล่อง GT**
@@ -54,6 +116,9 @@ python benchmark/benchmark_models.py yolo11s.pt dfine-s rtmdet-tiny   # เท�
 
 - `recall คนถูกบัง` = ตัวเลขที่สำคัญที่สุดสำหรับงานนี้
 - `false pos` = detection ที่ไม่ตกในกล่องคนใดเลย (เทียบกับคนทุกขนาด)
+- `โต๊ะว่างพลาด` (ชุด `desk` เท่านั้น) = **จำนวนภาพโต๊ะว่างที่โมเดลเจอคน** =
+  จำนวนครั้งที่ระบบจะรายงาน **PRESENT ทั้งที่ไม่มีใครนั่ง** ซึ่งเป็น failure mode
+  ที่แย่ที่สุดของงานนี้ — ผิดในทิศที่ทำลายความน่าเชื่อถือของรายงานมากกว่าการพลาดคน
 
 ทุก backend ถูกวัดด้วยเงื่อนไขเดียวกัน — `conf=0.5`, **2 threads**, และจับเวลาครอบ
 `preprocess + inference + postprocess` ทั้งก้อน (เฟรม BGR เข้า → list ของ center ออก)
@@ -82,10 +147,30 @@ class MyDetector:
 วิธีเช็คเร็วๆ ว่า preprocessing ถูก: ถ้า `found` กับ `inside_gt` ใกล้เคียงกัน
 แปลว่าพิกัดตรง ถ้า `found` เยอะแต่ `inside_gt` เกือบศูนย์ แปลว่าพิกัดเพี้ยน
 
-## ข้อจำกัด
+## ⚠️ ข้อจำกัดใหญ่สุด — อ่านก่อนเชื่อตัวเลข
 
-- COCO เป็นภาพระดับสายตา ไม่ใช่มุม CCTV มองลงมา — ลำดับอาจเปลี่ยนเมื่อติดกล้องจริง
-  ข้อนี้กระทบโมเดลที่เทรนกับภาพกล้องวงจรปิด (`rtmdet-*-person`,
-  OpenVINO person-detection) **มากเป็นพิเศษ** เพราะเป็นคนละโดเมนกับที่มันเทรนมา
+**ทั้งสองชุดยังเป็นภาพ COCO** ซึ่งเป็น**ภาพถ่ายระดับสายตาแบบคนถ่ายรูปคน** ไม่ใช่
+เฟรมจากกล้องที่ติดมองโต๊ะทำงาน ชุด `desk` คัดให้เป็นฉากโต๊ะทำงานได้ก็จริง
+แต่แก้เรื่อง**มุมกล้อง**ไม่ได้
+
+- **อันดับโมเดลกลับทิศจริง** เมื่อเปลี่ยนชุดทดสอบ — `dfine-n` ชนะขาดบนชุด
+  `occlusion` แต่บนชุด `desk` กลับเด้ง PRESENT บนโต๊ะว่าง 3/31 ใบ ขณะที่
+  `yolo11n` เด้ง 0/31 **ถ้าเปลี่ยนชุดแล้วอันดับพลิกได้ขนาดนี้ ชุดจากกล้องจริง
+  ก็พลิกได้อีก**
+- ลำเอียง**ต่อต้าน**โมเดลที่เทรนกับกล้องวงจรปิด (`rtmdet-*-person`, OpenVINO
+  person-detection) ซึ่งเป็น**กลุ่มที่เร็วที่สุด** — recall ต่ำของพวกมันยังไม่ใช่
+  หลักฐานว่าใช้ไม่ได้ เพราะถูกวัดในโดเมนที่มันไม่ได้เทรนมา
+- **n เล็ก** — ชุด `desk` มีคนแค่ 25 กับโต๊ะว่าง 31 ใบ ความต่าง "92% vs 100%"
+  คือ 2 คน ใช้ชี้ทิศทางได้ ไม่ใช่ตัวเลขที่จะเอาไปรับประกันกับลูกค้า
+- เคสที่ยัง**ไม่มีในชุดไหนเลย**: คนเดินผ่านที่ไม่ได้นั่ง, แสงจากจอมอนิเตอร์
+  ในห้องมืด (เคสเก้าอี้ว่างมีแล้วในชุด `desk`)
+
+ตัวเลขที่ยัง**เชื่อได้**: อัตราเร่งจาก OpenVINO/INT8 เพราะเป็นเรื่อง runtime
+ไม่เกี่ยวกับเนื้อภาพ ส่วนอันดับความแม่นให้ถือเป็น**การคัดกรองหยาบ** เท่านั้น
+
+**หา dataset สาธารณะที่ตรงโจทย์แล้ว — ไม่มีชุดไหนผ่านครบทั้งมุมกล้อง,
+axis-aligned bbox และ license เชิงพาณิชย์** รายละเอียดอยู่ใน `context.md` ข้อ 14
+
+## ข้อจำกัดอื่น
 - ภาพมีขนาดไม่เท่ากันทุกใบ ทำให้ ms สูงกว่าของจริง ~20-25%
 - ms บนโน้ตบุ๊กแกว่งตามความร้อน/โหลด — **อัตราส่วนภายในการรันเดียวกันเชื่อถือได้กว่าค่าสัมบูรณ์**

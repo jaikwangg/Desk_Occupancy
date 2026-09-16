@@ -34,10 +34,23 @@ ultralytics ดาวน์โหลดให้อัตโนมัติค�
 | `rtmdet-n-person` `rtmdet-m-person` | `rtmdet-{n,m}-person.onnx` | เหมือนกัน (เทรนคลาสคนเดียว) |
 | `dfine-n` `dfine-s` `dfine-m` | cache ของ transformers | [ustc-community/dfine-*-coco](https://huggingface.co/ustc-community/dfine-small-coco) |
 
-ผลการวัดดู `benchmark/example_run.md` — **สรุป: `yolo11s` ยังเป็นตัว deploy**
-เพราะ `dfine-n` แม่นกว่า (ถูกบัง 97% vs 94%) แต่ยังช้ากว่า 2 เท่าเพราะยังไม่ได้
-export OpenVINO ส่วน `rtmdet-*` และ `crowdhuman-yolov8n` แพ้ทุกช่อง
-รายละเอียดเหตุผลอยู่ใน `context.md` ข้อ 10
+### D-FINE ที่ export เป็น OpenVINO แล้ว
+
+สร้างด้วย `python benchmark/export_dfine_openvino.py dfine-n` (ไม่เข้า git)
+
+| โฟลเดอร์ | ขนาด | ms (× yolo11s) | recall ถูกบัง | FP |
+|---|---|---|---|---|
+| `dfine-n_openvino_model/` | 15.9 MB | 0.57x | **97%** | 4 |
+| `dfine-n_int8_openvino_model/` | **5.4 MB** | 0.46x | **97%** | 6 |
+
+เรียกใน benchmark ด้วยชื่อ `dfine-n-ov` / `dfine-n-ov-int8`
+
+**สรุปสถานะ:** `dfine-n` + OpenVINO **เร็วกว่า `yolo11s` pytorch 1.76 เท่าและแม่นกว่า
+3 จุด** แต่ยังไม่เปลี่ยน production เพราะ (ก) FP สูงกว่า (4 vs 2) ต้องจูน `conf` ก่อน
+(ข) `desk_occupancy_multi.py` ยังโหลดโมเดลผ่าน `ultralytics` เท่านั้น
+ส่วน `rtmdet-*` และ `crowdhuman-yolov8n` แพ้ทุกช่อง ตัดทิ้งได้
+
+รายละเอียดอยู่ใน `context.md` ข้อ 10 และ `benchmark/example_run.md`
 
 ## pose_landmarker.task (fallback — MediaPipe Pose)
 

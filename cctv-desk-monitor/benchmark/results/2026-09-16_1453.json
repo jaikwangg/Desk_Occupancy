@@ -1,0 +1,28 @@
+{
+  "_meta": {
+    "date": "2026-09-16 14:53",
+    "testset": "desk",
+    "argv": [
+      "yolo11s.pt",
+      "models/yolo11s_openvino_model",
+      "dfine-n-ov",
+      "rtmdet-n-person"
+    ],
+    "images": 47,
+    "threads": 2,
+    "conf": 0.5
+  },
+  "rtmdet-n-person": {
+    "ms": 9.995957447632037,
+    "recall_all": 0.76,
+    "recall_occluded": 0.7647058823529411,
+    "hit_all": 19,
+    "tot_all": 25,
+    "hit_occ": 13,
+    "tot_occ": 17,
+    "false_pos": 0,
+    "neg_imgs": 31,
+    "neg_fp": 0,
+    "neg_hit": 0
+  }
+}

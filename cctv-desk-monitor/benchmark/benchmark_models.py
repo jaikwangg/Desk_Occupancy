@@ -14,10 +14,11 @@ ground truth เป็นของ COCO ไม่ใช่การนับเ�
   ย่อภาพเป็น 480px แล้วเช็คว่า center ของ detection ตกในกล่อง GT ของคนนั้นไหม
   (ระบบจริงก็แมป center เข้า ROI แบบเดียวกัน)
 
-รองรับ 3 backend — เรียกด้วยชื่อสั้นได้ ตัวไหนไม่มีไฟล์จะโหลดให้อัตโนมัติ:
+รองรับ 4 backend — เรียกด้วยชื่อสั้นได้ ตัวไหนไม่มีไฟล์จะโหลดให้อัตโนมัติ:
   ultralytics    yolo11n.pt yolo11s.pt rtdetr-l.pt crowdhuman-yolov8n
                  models/yolo11s_openvino_model  (path ที่เป็นโฟลเดอร์ = OpenVINO)
   transformers   dfine-n dfine-s dfine-m         (D-FINE — transformer detector)
+  dfine+openvino dfine-n-ov dfine-n-ov-int8     (ต้อง export ก่อน ดู export_dfine_openvino.py)
   onnx+openvino  rtmdet-tiny rtmdet-s rtmdet-n-person rtmdet-m-person
 
 รัน:
@@ -33,6 +34,7 @@ import sys
 import time
 import urllib.request
 from pathlib import Path
+from types import SimpleNamespace
 
 os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
 
@@ -44,7 +46,8 @@ from ultralytics import YOLO  # noqa: E402
 HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent
 MODELDIR = ROOT / "models"
-META = HERE / "occlusion_testset.json"
+TESTSETS = {"occlusion": HERE / "occlusion_testset.json",
+            "desk": HERE / "desk_testset.json"}
 IMGDIR = HERE / "images"
 
 THREADS = 2  # ตรงกับ detector.torch_threads ใน occupancy.yaml
@@ -57,6 +60,7 @@ DEFAULT_MODELS = ["yolo11n.pt", "yolo11s.pt",
 
 ALL_MODELS = ["yolov8n.pt", "yolo11n.pt", "yolov8s.pt", "yolo11s.pt",
               "dfine-n", "dfine-s", "dfine-m",
+              "dfine-n-ov", "dfine-n-ov-int8",
               "rtmdet-tiny", "rtmdet-s", "rtmdet-n-person", "rtmdet-m-person",
               "crowdhuman-yolov8n", "rtdetr-l.pt"]
 
@@ -135,23 +139,47 @@ class UltralyticsDetector:
 
 
 class DFineDetector:
-    """D-FINE ผ่าน transformers — postprocess ของ processor คืนกล่องพิกัดภาพเดิมให้แล้ว"""
+    """D-FINE — postprocess ของ processor คืนกล่องพิกัดภาพเดิมให้แล้ว
 
-    def __init__(self, model_id: str):
-        from transformers import AutoImageProcessor, AutoModelForObjectDetection
+    `ov_dir` = โฟลเดอร์ IR ที่ export ด้วย `benchmark/export_dfine_openvino.py`
+    ถ้าใส่มาจะรัน forward บน OpenVINO แทน PyTorch โดย **pre/postprocess ใช้ของ
+    เดิมทุกบรรทัด** — ต่างกันแค่ runtime ผลจึงเทียบกันได้ตรงๆ
+    """
+
+    def __init__(self, model_id: str, ov_dir: Path | None = None):
+        from transformers import AutoImageProcessor, AutoConfig
 
         torch.set_num_threads(THREADS)
         self.proc = AutoImageProcessor.from_pretrained(model_id)
-        self.model = AutoModelForObjectDetection.from_pretrained(model_id).eval()
-        names = self.model.config.id2label
+        names = AutoConfig.from_pretrained(model_id).id2label
         self.person = next(i for i, n in names.items() if str(n).lower() == "person")
+
+        self.net = None
+        if ov_dir is None:
+            from transformers import AutoModelForObjectDetection
+
+            self.model = AutoModelForObjectDetection.from_pretrained(model_id).eval()
+        else:
+            import openvino as ov
+
+            core = ov.Core()
+            self.net = core.compile_model(ov_dir / "model.xml", "CPU",
+                                          {"INFERENCE_NUM_THREADS": THREADS})
+
+    def _forward(self, pixel_values):
+        """คืน object ที่มี .logits/.pred_boxes ให้ post_process_object_detection ใช้"""
+        if self.net is None:
+            with torch.inference_mode():
+                return self.model(pixel_values=pixel_values)
+        logits, boxes = self.net(pixel_values.numpy()).to_tuple()
+        return SimpleNamespace(logits=torch.from_numpy(logits),
+                               pred_boxes=torch.from_numpy(boxes))
 
     def __call__(self, bgr):
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
         h, w = bgr.shape[:2]
         inputs = self.proc(images=rgb, return_tensors="pt")
-        with torch.inference_mode():
-            out = self.model(**inputs)
+        out = self._forward(inputs["pixel_values"])
         res = self.proc.post_process_object_detection(
             out, target_sizes=torch.tensor([[h, w]]), threshold=CONF)[0]
         keep = res["labels"] == self.person
@@ -210,6 +238,17 @@ def build_detector(name: str):
     """แปลชื่อสั้นเป็น detector — โหลดไฟล์ให้ถ้ายังไม่มี"""
     if name in DFINE_IDS:
         return DFineDetector(DFINE_IDS[name])
+    # dfine-n-ov / dfine-n-ov-int8 -> IR ที่ export ไว้ใน models/
+    for suffix, folder in (("-ov-int8", "_int8_openvino_model"),
+                           ("-ov", "_openvino_model")):
+        if name.endswith(suffix) and name[:-len(suffix)] in DFINE_IDS:
+            base = name[: -len(suffix)]
+            ov_dir = MODELDIR / f"{base}{folder}"
+            if not (ov_dir / "model.xml").exists():
+                raise FileNotFoundError(
+                    f"ยังไม่มี {ov_dir.name} — รัน "
+                    f"python benchmark/export_dfine_openvino.py {base}")
+            return DFineDetector(DFINE_IDS[base], ov_dir=ov_dir)
     if name in RTMDET_FILES:
         path = MODELDIR / RTMDET_FILES[name]
         download(f"{_RTMDET_BASE}/{RTMDET_FILES[name]}", path)
@@ -239,6 +278,7 @@ def evaluate(model_name: str, recs: list[dict]) -> dict:
     det(cv2.resize(warm, (480, int(warm.shape[0] * 480 / warm.shape[1]))))
 
     hit_all = tot_all = hit_occ = tot_occ = false_pos = 0
+    neg_imgs = neg_fp = neg_hit = 0
     infer_s = 0.0
     for r in recs:
         img = cv2.imread(str(IMGDIR / r["file"]))
@@ -264,6 +304,11 @@ def evaluate(model_name: str, recs: list[dict]) -> dict:
         for cx, cy in centers:
             if not any(inside(b, cx, cy) for b in r["persons_all"]):
                 false_pos += 1
+        # ภาพ negative = โต๊ะว่างไม่มีคนเลย ทุก detection คือ false PRESENT
+        if r.get("kind") == "negative":
+            neg_imgs += 1
+            neg_fp += len(centers)
+            neg_hit += bool(centers)
 
     return {
         "ms": infer_s / len(recs) * 1000,
@@ -272,10 +317,26 @@ def evaluate(model_name: str, recs: list[dict]) -> dict:
         "hit_all": hit_all, "tot_all": tot_all,
         "hit_occ": hit_occ, "tot_occ": tot_occ,
         "false_pos": false_pos,
+        # ภาพโต๊ะว่าง: neg_hit = จำนวนภาพที่เจอคนทั้งที่ไม่มีคน = false PRESENT
+        "neg_imgs": neg_imgs, "neg_fp": neg_fp, "neg_hit": neg_hit,
     }
 
 
 def main(argv: list[str]) -> int:
+    which = "occlusion"
+    for i, a in enumerate(argv):
+        if a == "--testset" and i + 1 < len(argv):
+            which = argv[i + 1]
+            argv = argv[:i] + argv[i + 2:]
+            break
+    if which not in TESTSETS:
+        print(f"ไม่รู้จักชุดทดสอบ {which} — เลือกจาก: {', '.join(TESTSETS)}")
+        return 1
+    META = TESTSETS[which]
+    if not META.exists():
+        print(f"ไม่มี {META.name} — รัน python benchmark/build_desk_testset.py ก่อน")
+        return 1
+
     models = ALL_MODELS if argv[:1] == ["--all"] else (argv or DEFAULT_MODELS)
 
     recs = json.loads(META.read_text(encoding="utf-8"))
@@ -290,8 +351,9 @@ def main(argv: list[str]) -> int:
     print(f"ทุกโมเดลจำกัด {THREADS} threads เท่ากัน (ตรงกับ detector.torch_threads)")
     print("หมายเหตุ: ms ที่นี่สูงกว่าของจริง ~20-25% เพราะภาพทดสอบขนาดไม่เท่ากันทุกใบ")
     print("          กล้องจริงส่งเฟรมขนาดคงที่ -> yolo11n ~68 ms, yolo11s ~120 ms\n")
-    print(f"{'model':<20}{'ms/ภาพ':>9}{'recall ทุกคน':>16}{'recall คนถูกบัง':>18}{'false pos':>12}")
-    print("-" * 76)
+    print(f"{'model':<20}{'ms/ภาพ':>9}{'recall ทุกคน':>16}{'recall คนถูกบัง':>18}"
+          f"{'false pos':>12}{'โต๊ะว่างพลาด':>16}")
+    print("-" * 92)
     rows = {}
     for name in models:
         try:
@@ -300,16 +362,19 @@ def main(argv: list[str]) -> int:
             print(f"{name:<20}  ใช้ไม่ได้: {str(exc)[:45]}")
             continue
         rows[name] = r
+        neg = (f"{r['neg_hit']}/{r['neg_imgs']}" if r["neg_imgs"] else "-")
         print(f"{name:<20}{r['ms']:>9.1f}"
               f"{r['hit_all']:>8}/{r['tot_all']:<3}{r['recall_all']:>6.0%}"
               f"{r['hit_occ']:>9}/{r['tot_occ']:<3}{r['recall_occluded']:>6.0%}"
-              f"{r['false_pos']:>10}")
+              f"{r['false_pos']:>10}{neg:>14}")
 
-    # เขียนทับทุกรอบ - ใส่ _meta ไว้เพราะ ms เทียบข้ามรอบไม่ได้ ต้องรู้ว่ามาจากรันไหน
-    out = HERE / "results_latest.json"
+    # เก็บ 2 ที่: results_latest.json (เขียนทับ) + results/ (เก็บถาวรไม่ทับกัน)
+    # เพราะ ms เทียบข้ามรอบไม่ได้ ถ้าเขียนทับที่เดียวจะเสียผลรอบที่เอกสารอ้างถึง
+    stamp = time.strftime("%Y-%m-%d_%H%M")
     payload = {
         "_meta": {
             "date": time.strftime("%Y-%m-%d %H:%M"),
+            "testset": which,
             "argv": argv or ["(default)"],
             "images": len(recs),
             "threads": THREADS,
@@ -317,8 +382,16 @@ def main(argv: list[str]) -> int:
         },
         **rows,
     }
-    out.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(f"\nเก็บผลดิบไว้ที่ {out.relative_to(ROOT)}")
+    blob = json.dumps(payload, indent=2, ensure_ascii=False)
+
+    archive = HERE / "results" / f"{stamp}.json"
+    archive.parent.mkdir(exist_ok=True)
+    archive.write_text(blob, encoding="utf-8")
+
+    out = HERE / "results_latest.json"
+    out.write_text(blob, encoding="utf-8")
+    print(f"\nเก็บผลดิบไว้ที่ {out.relative_to(ROOT)}"
+          f" และ {archive.relative_to(ROOT)}")
     return 0
 
 
