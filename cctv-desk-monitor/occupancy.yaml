@@ -1,0 +1,64 @@
+# Desk Occupancy Monitor - config
+# ดูรายละเอียดทั้งหมดใน context.md
+
+cameras:
+  # --- ทดสอบด้วยไฟล์วิดีโอก่อน ---
+  - id: cam-1
+    name: "Sample - Zone A"
+    source: data/sample_real.mp4          # เปลี่ยนเป็น rtsp://user:pass@10.0.0.5:554/stream1 ตอนใช้จริง
+    fps: 2
+    zones:
+      - id: desk-1
+        name: "Desk 1"
+        roi: [0, 0, 480, 540]        # x1,y1,x2,y2 ใน source pixels
+        away_seconds: 60
+      - id: desk-2
+        name: "Desk 2"
+        roi: [480, 0, 960, 540]
+        away_seconds: 60
+
+  # --- ตัวอย่างกล้องตัวที่ 2 (ลบคอมเมนต์ออกเมื่อพร้อมใช้) ---
+  # - id: cam-2
+  #   name: "Floor 3 - Zone B"
+  #   source: rtsp://user:pass@10.0.0.6:554/stream1
+  #   fps: 2
+  #   zones:
+  #     - id: desk-3
+  #       name: "Desk 3"
+  #       roi: [0, 0, 1920, 540]
+  #       away_seconds: 60
+  #     - id: desk-4
+  #       name: "Desk 4"
+  #       roi: [0, 540, 1920, 1080]
+  #       away_seconds: 60
+
+storage:
+  log_csv: data/occupancy.csv
+  db: data/occupancy.sqlite
+
+dashboard:
+  enabled: true
+  host: "0.0.0.0"
+  port: 8080
+
+detector:
+  # สลับโมเดลได้ที่บรรทัดเดียวนี้ - วัดกับฉากคนถูกจอบังจริงแล้ว (ดู context.md ข้อ 10)
+  #
+  #   models/yolo11n.pt              ~108 ms   recall คนถูกบัง 88%
+  #   models/yolo11s.pt              ~176 ms   recall คนถูกบัง 94%
+  #   models/yolo11n_openvino_model/  ~42 ms   recall คนถูกบัง 84%
+  #   models/yolo11s_openvino_model/ ~104 ms   recall คนถูกบัง 93%  <- คุ้มสุด
+  #
+  # ถ้า path เป็นโฟลเดอร์ = โมเดล OpenVINO (เร็วกว่า .pt 1.7-2.6 เท่าบน CPU)
+  # สร้างด้วย:  YOLO('models/yolo11s.pt').export(format='openvino', imgsz=480)
+  #
+  # yolo11s+openvino เร็วกว่า yolo11n+pytorch และแม่นกว่าด้วย - ดู context.md ข้อ 10
+  yolo_model: models/yolo11n.pt
+  confidence: 0.5
+  torch_threads: 2                # สำคัญ! ปล่อยให้ใช้ทุก core กิน CPU เพิ่ม 11 เท่าโดยไม่เร็วขึ้น
+
+pose:
+  model: models/pose_landmarker.task
+  downscale_width: 480
+  min_motion_area: 400
+  presence_confidence: 0.5

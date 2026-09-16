@@ -1,0 +1,21 @@
+# โมเดล (ดาวน์โหลดเอง ไม่ commit)
+models/*.pt
+models/*.onnx
+models/*.task
+# ultralytics ชอบโหลดมาไว้ที่ root (gitignore ไม่รองรับ comment ต่อท้ายบรรทัด)
+*.pt
+*.onnx
+
+# ข้อมูล runtime / วิดีโอตัวอย่าง
+data/*.mp4
+data/*.csv
+data/*.sqlite
+data/zones_calibrated.json
+data/test_occupancy.*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+models/*_openvino_model/

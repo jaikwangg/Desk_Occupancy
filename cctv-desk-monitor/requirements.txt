@@ -1,0 +1,10 @@
+# ติดตั้ง:  pip install -r requirements.txt
+opencv-python-headless
+numpy
+flask
+pyyaml
+ultralytics          # ตัวตรวจจับหลัก (ลาก torch มาด้วย ~1 GB)
+pillow               # วาด label ภาษาไทยบนวิดีโอ (ติดมากับ ultralytics อยู่แล้ว)
+openvino             # optional - export โมเดลแล้วเร็วขึ้น 1.7-2.6 เท่าบน CPU
+# mediapipe          # optional fallback - ต้องมี models/pose_landmarker.task ด้วย
+# transformers       # optional - เฉพาะเวลาวัด dfine-* ใน benchmark/ ไม่ต้องมีตอน deploy

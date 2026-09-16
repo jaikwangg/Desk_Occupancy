@@ -1,0 +1,13 @@
+{
+	"folders": [
+		{
+			"name": "Desk_Occupancy",
+			"path": "../.."
+		},
+		{
+			"name": "test-pir",
+			"path": "../../../../Documents/PlatformIO/Projects/test-pir"
+		}
+	],
+	"settings": {}
+}
