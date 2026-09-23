@@ -107,10 +107,12 @@ cctv-desk-monitor/
 ├── models/
 │   ├── yolov8n.pt                  # โมเดล YOLOv8n (ตรวจจับบุคคล)
 │   └── pose_landmarker.task        # MediaPipe Pose (fallback)
-└── data/
-    ├── sample_real.mp4             # วิดีโอตัวอย่างสำหรับทดสอบ
-    ├── dashboard_example.png       # ตัวอย่างหน้า dashboard
-    └── calibrate_example.png       # ตัวอย่างหน้าตั้งค่าโซน
+├── data/
+│   ├── sample_real.mp4             # วิดีโอตัวอย่างสำหรับทดสอบ
+│   ├── dashboard_example.png       # ตัวอย่างหน้า dashboard
+│   └── calibrate_example.png       # ตัวอย่างหน้าตั้งค่าโซน
+├── benchmark/                      # ชุดทดสอบ + สคริปต์วัดโมเดล (ดูข้อ 10)
+└── research/                       # บันทึกการค้นคว้าที่ยังไม่ตัดสินใจ (ดู research/README.md)
 ```
 
 ---
@@ -878,6 +880,20 @@ torch.set_num_threads(2)                              # ปรับผ่าน
   `PRESENT`/`AWAY` จริงๆ คือ binary classification บน crop เล็กๆ
   (MobileNetV3-small 96x96 ≈ 1-3 ms/โซน = ถูกกว่า detector 30-100 เท่า)
   ต้องเทรนต่อการติดตั้ง — ใช้ YOLO เป็น teacher เก็บ label อัตโนมัติสัปดาห์แรกได้
+
+  **Reference implementation (2026-09-21):** Kaggle
+  [Driver Behavior Detection | CNN](https://www.kaggle.com/code/imtkaggleteam/driver-behavior-detection-cnn)
+  (dataset `robinreni` ~10,766 ภาพ 5 คลาส) เป็น pattern เดียวกันเป๊ะ —
+  **กล้อง fix + subject ตำแหน่งเดิม + CNN classify บน crop** (ไม่ใช่ detection)
+  ยก training loop / augmentation / confusion matrix มาใช้ได้ ต่างแค่ head (5 คลาส → 2)
+  - ⚠️ **เอามาเฉพาะ pattern ห้ามเอา task** — การ classify "พฤติกรรม" ขัดข้อ 2
+    ("นิ่ง ≠ ไม่ทำงาน") และชนข้อ 13 (PDPA) เพราะกลายเป็นตัดสินพฤติกรรมรายบุคคล
+  - ⚠️ **ไม่ขัดกับข้อ 4 "crop ทำให้เกิด FP จากของบนโต๊ะ"** — ข้อสรุปนั้นมาจากเอา
+    **detector ทั่วไป (COCO)** ไปรันบน crop ส่วนนี่คือ **classifier ที่เทรนกับ crop
+    ของโต๊ะตัวเอง** ซึ่งเห็นโต๊ะว่างของจริงเป็นร้อยใบ คนละเงื่อนไขกัน
+  - ⚠️ weight ใช้ต่อไม่ได้ (dashcam คนเต็มเฟรม vs CCTV เพดาน คนเล็ก แสงจากจอ) ได้แต่ "วิธี"
+  - **ยังไม่ปลดล็อกอะไรตอนนี้** — คอขวดคือ "ภาพโต๊ะว่างจากกล้องตัวเอง" ที่ยังไม่มี
+    notebook นี้ช่วยได้เฉพาะ *หลังจาก* มีภาพแล้ว
 - เก็บภาพ snapshot ตอนเกิด event เพื่อ audit (พร้อม privacy masking)
 
 ---
